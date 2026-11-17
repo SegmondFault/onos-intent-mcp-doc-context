@@ -153,7 +153,7 @@ class McpProtocolTests(unittest.TestCase):
         self.assertIsNotNone(result.capabilities.tools)
         self.assertIsNotNone(result.capabilities.resources)
         self.assertIsNotNone(result.capabilities.prompts)
-        self.assertEqual(result.server_info.name, "onos-intent-mcp")
+        self.assertEqual(result.server_info.name, "onos-intent-mcp-doc-context")
 
     def test_tools_list(self):
         async def action(client):
@@ -168,6 +168,8 @@ class McpProtocolTests(unittest.TestCase):
         self.assertIn("disconnect_nodes", names)
         self.assertIn("check_connectivity", names)
         self.assertIn("set_link", names)
+        self.assertIn("list_context_documents", names)
+        self.assertIn("read_context_document", names)
 
     def test_network_context(self):
         async def action(client):

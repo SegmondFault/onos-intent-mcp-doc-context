@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "documents": [
+    {
+      "id": "demo-scenario-brief",
+      "title": "Demo scenario brief",
+      "file": "documents/demo-scenario.md",
+      "scenario_ids": ["DEMO-01"],
+      "category": "supplied_context",
+      "sensitivity": "demo",
+      "authority": "scenario_facts"
+    },
+    {
+      "id": "demo-connectivity-rules",
+      "title": "Demo connectivity requirements and restrictions",
+      "file": "documents/demo-connectivity-rules.json",
+      "scenario_ids": ["DEMO-01"],
+      "category": "supplied_context",
+      "sensitivity": "demo",
+      "authority": "approved_rules"
+    },
+    {
+      "id": "demo-change-history",
+      "title": "Demo change history",
+      "file": "documents/demo-change-history.csv",
+      "scenario_ids": ["DEMO-01"],
+      "category": "history",
+      "sensitivity": "demo",
+      "authority": "historical_record"
+    }
+  ]
+}

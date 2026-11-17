@@ -1,6 +1,28 @@
-# ONOS MCP Server
+# ONOS Intent MCP — Document Context Fork
 
-A standalone [Model Context Protocol](https://modelcontextprotocol.io/) server for ONOS-managed networks, plus a JSON-driven Mininet topology launcher. The server discovers hosts, switches, and links from ONOS at call time, so it is not tied to a fixed topology.
+A Skynet research fork of Nenskyy's ONOS Intent MCP. It adds a small,
+read-only document catalogue for experiments on how request specificity and
+supplied context affect an LLM agent's translation of natural-language
+connectivity requests into SDN intents.
+
+The ONOS and Mininet behaviour remains intact. Document context is deliberately
+simple: approved UTF-8 Markdown, text, JSON, and CSV files are returned as
+bounded text. There is no arbitrary path access, document writing, remote
+fetching, embedding model, or vector database.
+
+## Team location
+
+- Workstation checkout: `/home/grayadmin/Projects/onos-intent-mcp-doc-context`
+- GitHub: `https://github.com/SegmondFault/onos-intent-mcp-doc-context`
+- Upstream: `https://github.com/Nenskyy/onos-intent-mcp`
+
+On `gray-area`:
+
+```bash
+cd /home/grayadmin/Projects/onos-intent-mcp-doc-context
+uv sync
+uv run main.py --selftest
+```
 
 ![Example call using the MCP](/images/example_mcp_use.png)
 
@@ -55,6 +77,8 @@ The MCP server does not start ONOS or the topology. If you only need discovery a
 | `list_hosts` | Hosts discovered by ONOS. |
 | `list_intents` | Active host-to-host intents, optionally including withdrawn ones. |
 | `list_flows` | Priority-100 intent flows grouped by switch. |
+| `list_context_documents` | List approved document IDs and metadata, optionally by scenario ID. |
+| `read_context_document` | Read a bounded line range from one approved document ID. |
 | `create_intent` | Create a host-to-host intent and wait for `INSTALLED`. |
 | `remove_intent` | Remove the intent matching two hosts. |
 | `connect_nodes` | Connect hosts with an intent, or bring a switch/host-switch link up. |
@@ -63,6 +87,55 @@ The MCP server does not start ONOS or the topology. If you only need discovery a
 | `set_link` | Bring any direct link up or down through the control API. |
 
 Resources use the `onos://` scheme. Additional reference material is in [`MCP_SERVER.md`](MCP_SERVER.md).
+
+## Document context
+
+The default catalogue is [`context/manifest.json`](context/manifest.json).
+Each manifest entry maps a stable document ID to a file beneath `context/` and
+records its scenario IDs, category, sensitivity, and authority. The LLM can
+list metadata and request text by ID; it cannot submit a filesystem path.
+
+The checked-in `DEMO-01` corpus includes Markdown, JSON, and CSV examples. Its
+verification marker is intentionally unique so a smoke test can demonstrate
+that the model actually retrieved the document rather than guessed.
+
+Safety boundaries:
+
+- allowed extensions are `.md`, `.txt`, `.json`, and `.csv`;
+- manifest paths must remain under the manifest directory and may not use
+  symlinks or parent traversal;
+- the manifest and each document have a configurable byte limit;
+- reads are capped at 500 lines and return a content hash and truncation state;
+- returned bodies are labelled as untrusted scenario data, not instructions;
+- document ID and line range are logged for experimental provenance.
+
+Use a different approved catalogue with:
+
+```bash
+uv run main.py --context-manifest /absolute/path/to/manifest.json
+```
+
+### Local Qwen smoke test
+
+With the existing llama.cpp model service listening on loopback, start this MCP
+over HTTP in one terminal:
+
+```bash
+cd /home/grayadmin/Projects/onos-intent-mcp-doc-context
+uv run main.py --http --http-host 127.0.0.1 --http-port 8000
+```
+
+Then run the bounded smoke test in another terminal:
+
+```bash
+cd /home/grayadmin/Projects/onos-intent-mcp-doc-context
+uv run python scripts/smoke_local_llm.py
+```
+
+The script exposes only the two document tools, requires the model to list and
+read the `DEMO-01` documents, and fails unless it returns the unique marker.
+It calls the local llama.cpp OpenAI-compatible endpoint directly; no API key or
+cloud service is used.
 
 ## Host and switch names
 
@@ -125,6 +198,8 @@ See [`topology/README.md`](topology/README.md) for the JSON schema and [`topolog
 | `ONOS_PASSWORD` | `rocks` | ONOS REST password |
 | `ONOS_APP_ID` | `org.onosproject.cli` | Intent application ID |
 | `ONOS_CONTROL_URL` | empty | Mininet control API URL; empty disables it |
+| `ONOS_CONTEXT_MANIFEST` | bundled demo manifest | Approved document catalogue |
+| `ONOS_CONTEXT_MAX_BYTES` | `262144` | Maximum bytes per manifest or document |
 | `ONOS_HOST_ALIASES` | empty | Host aliases, `name=IP/MAC/ID,...` |
 | `ONOS_SWITCH_ALIASES` | empty | Switch aliases, `name=device-ID,...` |
 | `ONOS_HTTP` | off | Set to `1` to start Streamable HTTP |
@@ -174,10 +249,11 @@ uv run python -m unittest -v \
   tests.test_topology_control \
   tests.test_http_transport \
   tests.test_mcp_server \
+  tests.test_document_context \
   tests.test_intent_tools
 ```
 
-Expected: 39 tests, with the live ONOS test skipped unless `ONOS_LIVE=1`.
+Expected: 44 tests, with the live ONOS test skipped unless `ONOS_LIVE=1`.
 
 ```bash
 ONOS_LIVE=1 uv run python -m unittest -v tests.test_intent_tools

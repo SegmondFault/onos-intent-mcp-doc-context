@@ -32,6 +32,9 @@ MCP client (stdio)  or  browser client (Streamable HTTP :8000/mcp)
    v
 main.py -> src/onos_mcp/server.py
    |
+   +-- src/onos_mcp/document_context.py
+   |       +--> approved UTF-8 files under the manifest directory
+   |
    +-- src/onos_mcp/intent_core.py: NodeResolver / IntentManager / OnosClient
    |       +--> ONOS REST API :8181
    |
@@ -117,9 +120,12 @@ PYTHONPATH=src python3 -m onos_mcp.stdlib_server \
 |---|---|
 | `main.py` | Entrypoint; selects stdio or Streamable HTTP |
 | `src/onos_mcp/server.py` | Primary MCP server using the official SDK |
+| `src/onos_mcp/document_context.py` | Approved manifest and bounded text reads |
 | `src/onos_mcp/core.py` | Tool implementations and stdlib fallback core |
 | `src/onos_mcp/stdlib_server.py` | Python 3.8 stdio fallback entrypoint |
 | `src/onos_mcp/intent_core.py` | ONOS client, resolver, intents, conflicts |
 | `tests/` | Offline tests and optional live ONOS test |
 | `topology/` | Mininet launcher, control API, and example JSON |
+| `context/` | Demo manifest and approved Markdown, JSON, and CSV files |
+| `scripts/smoke_local_llm.py` | Local Qwen-to-MCP document retrieval smoke test |
 | `.env.example` | Example environment configuration |

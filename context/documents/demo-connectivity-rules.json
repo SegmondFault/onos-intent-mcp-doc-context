@@ -1,0 +1,18 @@
+{
+  "scenario_id": "DEMO-01",
+  "required_connectivity": [
+    {
+      "source": "h1",
+      "destination": "h3",
+      "purpose": "checkout reporting"
+    }
+  ],
+  "restricted_connectivity": [
+    {
+      "source": "h2",
+      "destination": "h4",
+      "reason": "payment-segment isolation"
+    }
+  ],
+  "approval_rule": "Any change touching h2 requires human approval."
+}

@@ -1,0 +1,3 @@
+event_id,scenario_id,change,result
+CH-001,DEMO-01,Connected h1 to h3,Verified
+CH-002,DEMO-01,Attempted h2 to h4,Rejected by payment-segment isolation

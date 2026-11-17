@@ -38,8 +38,8 @@ from .intent_core import (
     parse_aliases,
 )
 
-SERVER_NAME = "onos-intent-mcp"
-SERVER_VERSION = "1.0.0"
+SERVER_NAME = "onos-intent-mcp-doc-context"
+SERVER_VERSION = "1.1.0"
 SUPPORTED_PROTOCOLS = (
     "2024-11-05",
     "2025-03-26",

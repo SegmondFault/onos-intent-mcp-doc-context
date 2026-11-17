@@ -1,7 +1,7 @@
 [project]
-name = "onos-intent-mcp"
-version = "1.0.0"
-description = "MCP server and Mininet topology launcher for ONOS-managed networks"
+name = "onos-intent-mcp-doc-context"
+version = "1.1.0"
+description = "ONOS intent MCP with bounded read-only scenario document context"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -17,5 +17,8 @@ onos-mcp = "onos_mcp.server:main"
 onos-mcp-stdlib = "onos_mcp.stdlib_server:main"
 
 [build-system]
-requires = ["uv_build>=0.10.7,<0.11.0"]
+requires = ["uv_build>=0.10.7,<0.14.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "onos_mcp"
