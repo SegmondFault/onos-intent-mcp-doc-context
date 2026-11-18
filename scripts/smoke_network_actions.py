@@ -240,37 +240,37 @@ def validate_websites(trace):
     allow_index, _ = find_after(
         trace,
         "set_website_access",
-        predicate=lambda row: website_action(row, "allowed.example", "allow"),
+        predicate=lambda row: website_action(row, "wikipedia.org", "allow"),
     )
     deny_index, _ = find_after(
         trace,
         "set_website_access",
         allow_index + 1,
-        lambda row: website_action(row, "blocked.example", "deny"),
+        lambda row: website_action(row, "netflix.com", "deny"),
     )
     allowed_index, allowed = find_after(
         trace,
         "check_website_access",
         deny_index + 1,
-        lambda row: website_check(row, "allowed.example", True),
+        lambda row: website_check(row, "wikipedia.org", True),
     )
     denied_index, denied = find_after(
         trace,
         "check_website_access",
         allowed_index + 1,
-        lambda row: website_check(row, "blocked.example", False),
+        lambda row: website_check(row, "netflix.com", False),
     )
     restore_index, _ = find_after(
         trace,
         "set_website_access",
         denied_index + 1,
-        lambda row: website_action(row, "blocked.example", "allow"),
+        lambda row: website_action(row, "netflix.com", "allow"),
     )
     _final_index, restored = find_after(
         trace,
         "check_website_access",
         restore_index + 1,
-        lambda row: website_check(row, "blocked.example", True),
+        lambda row: website_check(row, "netflix.com", True),
     )
     return {
         "allowed_http_status": allowed["result"].get("status"),
@@ -357,7 +357,7 @@ async def run(args):
                 "connect_nodes",
                 {"source": "h1", "destination": "h5", "force": True},
             )
-            for website in ("allowed.example", "blocked.example"):
+            for website in ("wikipedia.org", "netflix.com"):
                 baseline_http = await wait_for_tool_ok(
                     client,
                     "check_website_access",
@@ -377,10 +377,10 @@ async def run(args):
                 (
                     "Test simulated website policy from h1. First call "
                     "list_websites. Call set_website_access to allow "
-                    "allowed.example from h1. Then deny blocked.example from "
-                    "h1 for 300 seconds. Check allowed.example and confirm its "
-                    "HTTP request succeeds. Check blocked.example and confirm "
-                    "its HTTP request fails. Then allow blocked.example again "
+                    "wikipedia.org from h1. Then deny netflix.com from "
+                    "h1 for 300 seconds. Check wikipedia.org and confirm its "
+                    "HTTP request succeeds. Check netflix.com and confirm "
+                    "its HTTP request fails. Then allow netflix.com again "
                     "and check it once more to confirm HTTP succeeds. Do every "
                     "step in that order. End with WEBSITE_TEST_COMPLETE."
                 ),
@@ -400,7 +400,7 @@ async def run(args):
                 {"source": "h1", "destination": "h2"},
                 allow_error=True,
             )
-            for website in ("allowed.example", "blocked.example"):
+            for website in ("wikipedia.org", "netflix.com"):
                 await checked_call(
                     client,
                     "set_website_access",

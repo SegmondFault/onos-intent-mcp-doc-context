@@ -1,0 +1,21 @@
+{
+  "scenario_id": "Hospital-01",
+  "policy_version": "1.0",
+  "scope": "nurse-station outbound web access",
+  "requester_authenticity": "out_of_scope",
+  "site_policy": [
+    {
+      "site": "wikipedia.org",
+      "decision": "allow",
+      "purpose": "approved reference and research access"
+    },
+    {
+      "site": "netflix.com",
+      "decision": "deny",
+      "purpose": "entertainment traffic is not approved"
+    }
+  ],
+  "unknown_site_rule": "Do not create access. Request clarification or an approved policy decision.",
+  "verification_rule": "Observe reachability before and after any permitted change and preserve unrelated connectivity.",
+  "test_endpoint_note": "The current lab maps these policy names to deterministic Mininet HTTP endpoints; it does not contact the public sites."
+}

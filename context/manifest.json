@@ -27,6 +27,15 @@
       "category": "history",
       "sensitivity": "demo",
       "authority": "historical_record"
+    },
+    {
+      "id": "hospital-01-web-policy",
+      "title": "Hospital-01 approved outbound web policy",
+      "file": "documents/hospital-01-web-policy.json",
+      "scenario_ids": ["Hospital-01"],
+      "category": "supplied_context",
+      "sensitivity": "internal",
+      "authority": "approved_rules"
     }
   ]
 }

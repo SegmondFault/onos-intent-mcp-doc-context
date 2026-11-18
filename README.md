@@ -106,6 +106,8 @@ list metadata and request text by ID; it cannot submit a filesystem path.
 The checked-in `DEMO-01` corpus includes Markdown, JSON, and CSV examples. Its
 verification marker is intentionally unique so a smoke test can demonstrate
 that the model actually retrieved the document rather than guessed.
+`Hospital-01` also includes an approved web-policy document: Wikipedia is
+permitted, Netflix is prohibited, and unknown sites require clarification.
 
 Safety boundaries:
 
@@ -186,7 +188,7 @@ are bounded to 30–3600 seconds and default to 300 seconds.
 For the website experiment, define an approved fixed-IP catalogue:
 
 ```bash
-ONOS_WEBSITE_ALIASES=allowed.example=10.20.0.4,blocked.example=10.20.0.5
+ONOS_WEBSITE_ALIASES=wikipedia.org=10.20.0.4,netflix.com=10.20.0.5
 ```
 
 `set_website_access(..., action="deny")` installs a priority-50124 ingress
@@ -196,6 +198,12 @@ otherwise grant connectivity. This is deliberately a fixed-IP HTTP lab
 simulation. It is not general Internet access control and does not implement
 DNS policy, proxying, HTTPS SNI inspection, URL filtering, or domain-to-IP
 tracking.
+
+The example names express the Hospital-01 policy: Wikipedia is an approved
+reference site and Netflix is prohibited. The example IPs are deterministic
+Mininet HTTP services, not public Wikipedia or Netflix endpoints. This keeps
+the policy experiment reproducible until the separate egress/NAT topology is
+built.
 
 ## ONOS and the control API
 
@@ -304,7 +312,7 @@ uv run python -m unittest -v \
   tests.test_intent_tools
 ```
 
-Expected: 46 tests, with the live ONOS test skipped unless `ONOS_LIVE=1`.
+Expected: 47 tests, with the live ONOS test skipped unless `ONOS_LIVE=1`.
 
 ```bash
 ONOS_LIVE=1 uv run python -m unittest -v tests.test_intent_tools

@@ -176,8 +176,8 @@ def make_generic_server():
         host_aliases={"web": "10.10.0.50"},
         switch_aliases={"edge": "of:0000000000000005"},
         website_aliases={
-            "allowed.example": "10.10.0.5",
-            "blocked.example": "10.10.0.50",
+            "wikipedia.org": "10.10.0.5",
+            "netflix.com": "10.10.0.50",
         },
     )
 
@@ -348,10 +348,10 @@ class GenericToolTests(unittest.TestCase):
             app_id="org.test",
             control_url="",
             client=GenericMcpFakeClient(),
-            website_aliases={"blocked.example": "10.10.0.50"},
+            website_aliases={"netflix.com": "10.10.0.50"},
         )
         denied = core.set_website_access(
-            "h1", "blocked.example", "deny", 120
+            "h1", "netflix.com", "deny", 120
         )
         self.assertTrue(denied["ok"])
         rules = core.list_website_policies()["deny_rules"]
@@ -360,10 +360,27 @@ class GenericToolTests(unittest.TestCase):
             rules[0]["criteria_map"]["IPV4_DST"], "10.10.0.50/32"
         )
         allowed = core.set_website_access(
-            "h1", "blocked.example", "allow", 120
+            "h1", "netflix.com", "allow", 120
         )
         self.assertEqual(len(allowed["removed"]), 1)
         self.assertEqual(core.list_website_policies()["deny_rules"], [])
+
+    def test_hospital_website_catalogue_names(self):
+        core = OnosMCPCore(
+            onos_url="http://127.0.0.1:8181",
+            app_id="org.test",
+            control_url="",
+            client=GenericMcpFakeClient(),
+            website_aliases={
+                "wikipedia.org": "10.10.0.5",
+                "netflix.com": "10.10.0.50",
+            },
+        )
+        rows = core.list_websites()["websites"]
+        self.assertEqual(
+            [row["name"] for row in rows],
+            ["netflix.com", "wikipedia.org"],
+        )
 
     def test_connect_and_disconnect_hosts_by_name(self):
         async def action(client):
