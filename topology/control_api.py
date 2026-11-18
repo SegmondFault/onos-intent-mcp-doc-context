@@ -2,6 +2,7 @@
 """Small topology control API for the generic Mininet launcher."""
 
 import json
+import ipaddress
 import logging
 import re
 import threading
@@ -9,6 +10,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 IP_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+HTTP_PATH_RE = re.compile(r"^/[A-Za-z0-9._~%/-]*$")
 CONTROL_LOCK = threading.Lock()
 LOG = logging.getLogger("topology-control")
 
@@ -118,6 +120,48 @@ class NetworkControl:
             "status": status,
         }
 
+    def http_get(self, source, destination, port=80, path="/"):
+        """Fetch a deliberately bounded HTTP URL from one Mininet host."""
+        if source not in self.hosts:
+            raise ControlError("unknown source host %r" % source)
+        try:
+            destination = str(ipaddress.IPv4Address(str(destination)))
+        except ipaddress.AddressValueError:
+            raise ControlError("destination must be an IPv4 address")
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            raise ControlError("HTTP port must be an integer")
+        if port not in (80, 8080):
+            raise ControlError("HTTP port must be 80 or 8080")
+        path = str(path or "/")
+        if not HTTP_PATH_RE.match(path) or len(path) > 256:
+            raise ControlError("HTTP path contains unsupported characters")
+
+        url = "http://%s:%d%s" % (destination, port, path)
+        command = (
+            "python3 -c \"import sys,urllib.request; "
+            "r=urllib.request.urlopen(sys.argv[1],timeout=5); "
+            "print(r.status); "
+            "print(r.read(256).decode('utf-8','replace'))\" %s" % url
+        )
+        output = self.hosts[source].cmd(command)
+        first = output.splitlines()[0].strip() if output.strip() else ""
+        try:
+            status = int(first)
+        except ValueError:
+            status = None
+        return {
+            "ok": status is not None and 200 <= status < 400,
+            "source": source,
+            "destination": destination,
+            "port": port,
+            "path": path,
+            "url": url,
+            "status": status,
+            "output": output,
+        }
+
     def handle(self, request):
         command = request.get("command")
         if command == "status":
@@ -133,6 +177,13 @@ class NetworkControl:
                 request.get("left"),
                 request.get("right"),
                 request.get("state"),
+            )
+        if command == "http_get":
+            return self.http_get(
+                request.get("source"),
+                request.get("destination"),
+                request.get("port", 80),
+                request.get("path", "/"),
             )
         raise ControlError("unknown control command %r" % command)
 

@@ -30,6 +30,25 @@ except ImportError:
 
 
 class McpFakeClient(FakeClient):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._flows = []
+        for index in range(1, 5):
+            self._flows.append(
+                {
+                    "deviceId": "of:000000000000000%d" % index,
+                    "id": "flow-%d" % index,
+                    "state": "ADDED",
+                    "priority": 100,
+                    "selector": {"criteria": []},
+                    "treatment": {"instructions": []},
+                    "bytes": 0,
+                    "packets": 0,
+                    "duration": 1,
+                }
+            )
+        self._next_flow = 100
+
     def devices(self):
         return [
             {
@@ -61,28 +80,62 @@ class McpFakeClient(FakeClient):
         return rows
 
     def flows(self):
-        rows = []
-        for index in range(1, 5):
-            rows.append(
-                {
-                    "deviceId": "of:000000000000000%d" % index,
-                    "id": "flow-%d" % index,
-                    "state": "ADDED",
-                    "priority": 100,
-                    "selector": {"criteria": []},
-                    "treatment": {"instructions": []},
-                    "bytes": 0,
-                    "packets": 0,
-                    "duration": 1,
-                }
+        return self._flows
+
+    def create_flow(self, device_id, payload, app_id):
+        self._next_flow += 1
+        row = dict(payload)
+        row.update(
+            {
+                "deviceId": device_id,
+                "id": "flow-%d" % self._next_flow,
+                "state": "ADDED",
+                "appId": app_id,
+            }
+        )
+        self._flows.append(row)
+        return 201, {}, row, json.dumps(row)
+
+    def delete_flow(self, device_id, flow_id):
+        self._flows = [
+            flow
+            for flow in self._flows
+            if not (
+                flow.get("deviceId") == device_id
+                and flow.get("id") == flow_id
             )
-        return rows
+        ]
+        return 204, {}, "", "/flows/%s/%s" % (device_id, flow_id)
 
 
 class GenericMcpFakeClient(McpFakeClient):
     def __init__(self, host_aliases=None):
         super().__init__(hosts=[dict(host) for host in GENERIC_HOSTS])
         self.host_aliases = host_aliases or {}
+        for index, host in enumerate(self._hosts):
+            host["locations"] = [
+                {
+                    "elementId": (
+                        "of:0000000000000001"
+                        if index < 2
+                        else "of:0000000000000005"
+                    ),
+                    "port": str(index + 1),
+                }
+            ]
+        self._flows = [
+            {
+                "deviceId": "of:0000000000000001",
+                "id": "flow-1",
+                "state": "ADDED",
+                "priority": 100,
+                "selector": {"criteria": []},
+                "treatment": {"instructions": []},
+                "bytes": 0,
+                "packets": 0,
+                "duration": 1,
+            }
+        ]
 
     def devices(self):
         return [dict(device) for device in GENERIC_DEVICES]
@@ -102,19 +155,7 @@ class GenericMcpFakeClient(McpFakeClient):
         ]
 
     def flows(self):
-        return [
-            {
-                "deviceId": "of:0000000000000001",
-                "id": "flow-1",
-                "state": "ADDED",
-                "priority": 100,
-                "selector": {"criteria": []},
-                "treatment": {"instructions": []},
-                "bytes": 0,
-                "packets": 0,
-                "duration": 1,
-            }
-        ]
+        return self._flows
 
 
 def make_server():
@@ -134,6 +175,10 @@ def make_generic_server():
         client=GenericMcpFakeClient(),
         host_aliases={"web": "10.10.0.50"},
         switch_aliases={"edge": "of:0000000000000005"},
+        website_aliases={
+            "allowed.example": "10.10.0.5",
+            "blocked.example": "10.10.0.50",
+        },
     )
 
 
@@ -167,6 +212,11 @@ class McpProtocolTests(unittest.TestCase):
         self.assertIn("connect_nodes", names)
         self.assertIn("disconnect_nodes", names)
         self.assertIn("check_connectivity", names)
+        self.assertIn("block_traffic", names)
+        self.assertIn("unblock_traffic", names)
+        self.assertIn("list_websites", names)
+        self.assertIn("set_website_access", names)
+        self.assertIn("check_website_access", names)
         self.assertIn("set_link", names)
         self.assertIn("list_context_documents", names)
         self.assertIn("read_context_document", names)
@@ -277,6 +327,44 @@ class McpIntentTests(unittest.TestCase):
 
 @unittest.skipUnless(Client, "mcp SDK is not installed")
 class GenericToolTests(unittest.TestCase):
+    def test_host_block_roundtrip(self):
+        core = OnosMCPCore(
+            onos_url="http://127.0.0.1:8181",
+            app_id="org.test",
+            control_url="",
+            client=GenericMcpFakeClient(),
+        )
+        blocked = core.block_traffic("h1", "h5", 120)
+        self.assertTrue(blocked["ok"])
+        self.assertEqual(len(blocked["rules"]), 2)
+        self.assertEqual(len(core.list_traffic_blocks()["rules"]), 2)
+        removed = core.unblock_traffic("h5", "h1")
+        self.assertEqual(len(removed["removed"]), 2)
+        self.assertEqual(core.list_traffic_blocks()["rules"], [])
+
+    def test_website_policy_roundtrip(self):
+        core = OnosMCPCore(
+            onos_url="http://127.0.0.1:8181",
+            app_id="org.test",
+            control_url="",
+            client=GenericMcpFakeClient(),
+            website_aliases={"blocked.example": "10.10.0.50"},
+        )
+        denied = core.set_website_access(
+            "h1", "blocked.example", "deny", 120
+        )
+        self.assertTrue(denied["ok"])
+        rules = core.list_website_policies()["deny_rules"]
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(
+            rules[0]["criteria_map"]["IPV4_DST"], "10.10.0.50/32"
+        )
+        allowed = core.set_website_access(
+            "h1", "blocked.example", "allow", 120
+        )
+        self.assertEqual(len(allowed["removed"]), 1)
+        self.assertEqual(core.list_website_policies()["deny_rules"], [])
+
     def test_connect_and_disconnect_hosts_by_name(self):
         async def action(client):
             connected = await client.call_tool(

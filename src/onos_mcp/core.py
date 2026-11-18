@@ -16,6 +16,7 @@ Typical use from the project root:
 """
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -48,6 +49,10 @@ SUPPORTED_PROTOCOLS = (
     "2026-07-28",
 )
 ACTIVE_STATES = ("INSTALLED", "INSTALLING", "REINSTALLING")
+HOST_BLOCK_PRIORITY = 50123
+WEBSITE_BLOCK_PRIORITY = 50124
+FLOW_TIMEOUT_MIN = 30
+FLOW_TIMEOUT_MAX = 3600
 
 INSTRUCTIONS = """\
 You are an intent-network assistant for an ONOS-managed network.
@@ -74,6 +79,10 @@ Rules:
 5. If a tool returns an error, report the exact error and the current network
    context instead of guessing.  If a name is unknown, ask for an alias or use
    get_network_context to see the discovered names.
+6. block_traffic and unblock_traffic change ONOS flow rules, not Mininet links.
+   set_website_access uses only the configured simulated website catalogue.
+   An allow removes this MCP's matching deny rule; it does not create general
+   connectivity, so verify the underlying intent separately.
 """
 
 RUNBOOK = """\
@@ -172,6 +181,7 @@ class OnosMCPCore:
         client=None,
         host_aliases=None,
         switch_aliases=None,
+        website_aliases=None,
         onos_user=DEFAULT_ONOS_USER,
         onos_password=DEFAULT_ONOS_PASSWORD,
     ):
@@ -185,6 +195,17 @@ class OnosMCPCore:
         )
         self.host_aliases = dict(host_aliases or {})
         self.switch_aliases = dict(switch_aliases or {})
+        self.website_aliases = {
+            str(name).lower(): str(address)
+            for name, address in dict(website_aliases or {}).items()
+        }
+        for name, address in self.website_aliases.items():
+            try:
+                ipaddress.IPv4Address(address)
+            except ipaddress.AddressValueError:
+                raise OnosError(
+                    "website alias %r must point to an IPv4 address" % name
+                )
         self.manager = IntentManager(
             client=self.client,
             app_id=self.app_id,
@@ -410,6 +431,123 @@ class OnosMCPCore:
                         },
                     },
                     ["source", "destination"],
+                ),
+                "annotations": {"readOnlyHint": True},
+            },
+            {
+                "name": "block_traffic",
+                "description": (
+                    "Block all Ethernet traffic in both directions between "
+                    "two ONOS-discovered hosts by installing exact-match "
+                    "high-priority drop flows on their attachment switches."
+                ),
+                "inputSchema": self._schema(
+                    {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                        "duration_seconds": {
+                            "type": "integer",
+                            "minimum": FLOW_TIMEOUT_MIN,
+                            "maximum": FLOW_TIMEOUT_MAX,
+                            "default": 300,
+                        },
+                    },
+                    ["source", "destination"],
+                ),
+                "annotations": {
+                    "readOnlyHint": False,
+                    "destructiveHint": True,
+                    "idempotentHint": True,
+                },
+            },
+            {
+                "name": "unblock_traffic",
+                "description": (
+                    "Remove only the MCP-managed drop flows matching the "
+                    "specified host pair."
+                ),
+                "inputSchema": self._schema(
+                    {
+                        "source": {"type": "string"},
+                        "destination": {"type": "string"},
+                    },
+                    ["source", "destination"],
+                ),
+                "annotations": {
+                    "readOnlyHint": False,
+                    "destructiveHint": False,
+                    "idempotentHint": True,
+                },
+            },
+            {
+                "name": "list_traffic_blocks",
+                "description": "List active MCP-managed host drop flows.",
+                "inputSchema": self._schema({}),
+                "annotations": {"readOnlyHint": True},
+            },
+            {
+                "name": "list_websites",
+                "description": (
+                    "List the fixed-IP simulated websites approved for this "
+                    "lab."
+                ),
+                "inputSchema": self._schema({}),
+                "annotations": {"readOnlyHint": True},
+            },
+            {
+                "name": "set_website_access",
+                "description": (
+                    "Allow or deny one source host access to one configured "
+                    "simulated website. Deny installs an ONOS IPv4 drop flow; "
+                    "allow removes only its matching deny flow."
+                ),
+                "inputSchema": self._schema(
+                    {
+                        "source": {"type": "string"},
+                        "website": {"type": "string"},
+                        "action": {
+                            "type": "string",
+                            "enum": ["allow", "deny"],
+                        },
+                        "duration_seconds": {
+                            "type": "integer",
+                            "minimum": FLOW_TIMEOUT_MIN,
+                            "maximum": FLOW_TIMEOUT_MAX,
+                            "default": 300,
+                        },
+                    },
+                    ["source", "website", "action"],
+                ),
+                "annotations": {
+                    "readOnlyHint": False,
+                    "destructiveHint": True,
+                    "idempotentHint": True,
+                },
+            },
+            {
+                "name": "list_website_policies",
+                "description": "List active MCP-managed website deny flows.",
+                "inputSchema": self._schema({}),
+                "annotations": {"readOnlyHint": True},
+            },
+            {
+                "name": "check_website_access",
+                "description": (
+                    "Perform a bounded HTTP GET from a Mininet host to one "
+                    "configured simulated website."
+                ),
+                "inputSchema": self._schema(
+                    {
+                        "source": {"type": "string"},
+                        "website": {"type": "string"},
+                        "port": {
+                            "type": "integer",
+                            "enum": [80, 8080],
+                            "default": 80,
+                        },
+                        "path": {"type": "string", "default": "/"},
+                    },
+                    ["source", "website"],
                 ),
                 "annotations": {"readOnlyHint": True},
             },
@@ -698,6 +836,172 @@ class OnosMCPCore:
             raise ToolError(parsed["error"])
         return parsed
 
+    @staticmethod
+    def _flow_criteria(flow):
+        result = {}
+        selector = flow.get("selector") or {}
+        for criterion in selector.get("criteria") or []:
+            kind = str(criterion.get("type") or "").upper()
+            if kind in ("ETH_SRC", "ETH_DST"):
+                result[kind] = str(criterion.get("mac") or "").lower()
+            elif kind in ("IPV4_SRC", "IPV4_DST"):
+                result[kind] = str(criterion.get("ip") or "")
+            elif kind == "ETH_TYPE":
+                value = str(criterion.get("ethType") or "").lower()
+                try:
+                    value = hex(int(value, 0))
+                except ValueError:
+                    pass
+                result[kind] = value
+        return result
+
+    @staticmethod
+    def _host_attachment(host):
+        location = (host.get("locations") or [{}])[0]
+        device = location.get("elementId")
+        if not device:
+            raise ToolError(
+                "host %s has no ONOS attachment point" % host.get("id")
+            )
+        return device
+
+    def _managed_flows(self, priority):
+        rows = []
+        for flow in self.client.flows():
+            try:
+                flow_priority = int(flow.get("priority"))
+            except (TypeError, ValueError):
+                continue
+            if flow_priority != priority:
+                continue
+            if flow.get("appId") != self.app_id:
+                continue
+            row = dict(flow)
+            row["criteria_map"] = self._flow_criteria(flow)
+            rows.append(row)
+        return rows
+
+    @staticmethod
+    def _rule_matches(flow, device, criteria):
+        if flow.get("deviceId") != device:
+            return False
+        current = flow.get("criteria_map") or {}
+        return all(current.get(key) == value for key, value in criteria.items())
+
+    def _install_drop_rule(self, device, criteria, priority, duration_seconds):
+        existing = [
+            flow
+            for flow in self._managed_flows(priority)
+            if self._rule_matches(flow, device, criteria)
+        ]
+        if existing:
+            return {"created": False, "flow": existing[0]}
+
+        selector = []
+        for kind, value in criteria.items():
+            if kind in ("ETH_SRC", "ETH_DST"):
+                selector.append({"type": kind, "mac": value})
+            elif kind in ("IPV4_SRC", "IPV4_DST"):
+                selector.append({"type": kind, "ip": value})
+            elif kind == "ETH_TYPE":
+                selector.append({"type": kind, "ethType": value})
+        payload = {
+            "priority": int(priority),
+            "timeout": int(duration_seconds),
+            "isPermanent": False,
+            "deviceId": device,
+            "treatment": {"instructions": []},
+            "selector": {"criteria": selector},
+        }
+        status, _headers, _parsed, body = self.client.create_flow(
+            device, payload, self.app_id
+        )
+        if status not in (200, 201, 202):
+            raise OnosError(
+                "ONOS rejected flow rule (HTTP %s): %s"
+                % (status, body[:400])
+            )
+        deadline = time.time() + 10
+        last = None
+        while time.time() < deadline:
+            matches = [
+                flow
+                for flow in self._managed_flows(priority)
+                if self._rule_matches(flow, device, criteria)
+            ]
+            if matches:
+                last = matches[0]
+                if str(last.get("state") or "").upper() == "ADDED":
+                    return {"created": True, "flow": last}
+            time.sleep(0.25)
+        raise OnosError("flow rule did not reach ADDED; last_seen=%r" % last)
+
+    def _delete_matching_flows(self, priority, specifications):
+        removed = []
+        for flow in self._managed_flows(priority):
+            if not any(
+                self._rule_matches(flow, device, criteria)
+                for device, criteria in specifications
+            ):
+                continue
+            status, _headers, body, _path = self.client.delete_flow(
+                flow.get("deviceId"), flow.get("id")
+            )
+            if status not in (200, 202, 204, 404):
+                raise OnosError(
+                    "ONOS rejected flow deletion (HTTP %s): %s"
+                    % (status, body[:400])
+                )
+            removed.append(
+                {"deviceId": flow.get("deviceId"), "id": flow.get("id")}
+            )
+        if removed:
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                remaining = [
+                    flow
+                    for flow in self._managed_flows(priority)
+                    if any(
+                        self._rule_matches(flow, device, criteria)
+                        for device, criteria in specifications
+                    )
+                ]
+                if not remaining:
+                    break
+                time.sleep(0.25)
+            else:
+                raise OnosError("flow deletion did not become visible in ONOS")
+        return removed
+
+    def _host_block_specs(self, source, destination):
+        resolver = self._resolver()
+        source_host, source_name = resolver.resolve_host(source)
+        destination_host, destination_name = resolver.resolve_host(destination)
+        if source_host.get("id") == destination_host.get("id"):
+            raise ToolError("source and destination are the same host")
+        source_mac = str(source_host.get("mac") or "").lower()
+        destination_mac = str(destination_host.get("mac") or "").lower()
+        specs = [
+            (
+                self._host_attachment(source_host),
+                {"ETH_SRC": source_mac, "ETH_DST": destination_mac},
+            ),
+            (
+                self._host_attachment(destination_host),
+                {"ETH_SRC": destination_mac, "ETH_DST": source_mac},
+            ),
+        ]
+        return source_name, destination_name, specs
+
+    def _website(self, website):
+        name = str(website or "").strip().lower()
+        if name not in self.website_aliases:
+            raise ToolError(
+                "unknown website %r; configured websites: %s"
+                % (website, ", ".join(sorted(self.website_aliases)) or "none")
+            )
+        return name, self.website_aliases[name]
+
     # ------------------------------------------------------------------
     # Tool implementations
     # ------------------------------------------------------------------
@@ -831,6 +1135,154 @@ class OnosMCPCore:
                 "count": count,
             }
         )
+
+    def block_traffic(self, source, destination, duration_seconds=300):
+        duration_seconds = int(duration_seconds)
+        if not FLOW_TIMEOUT_MIN <= duration_seconds <= FLOW_TIMEOUT_MAX:
+            raise ToolError(
+                "duration_seconds must be between %d and %d"
+                % (FLOW_TIMEOUT_MIN, FLOW_TIMEOUT_MAX)
+            )
+        source_name, destination_name, specs = self._host_block_specs(
+            source, destination
+        )
+        installed = []
+        try:
+            for device, criteria in specs:
+                installed.append(
+                    self._install_drop_rule(
+                        device,
+                        criteria,
+                        HOST_BLOCK_PRIORITY,
+                        duration_seconds,
+                    )
+                )
+        except Exception:
+            self._delete_matching_flows(HOST_BLOCK_PRIORITY, specs)
+            raise
+        return {
+            "ok": True,
+            "source": source_name,
+            "destination": destination_name,
+            "priority": HOST_BLOCK_PRIORITY,
+            "duration_seconds": duration_seconds,
+            "rules": installed,
+        }
+
+    def unblock_traffic(self, source, destination):
+        source_name, destination_name, specs = self._host_block_specs(
+            source, destination
+        )
+        removed = self._delete_matching_flows(HOST_BLOCK_PRIORITY, specs)
+        return {
+            "ok": True,
+            "source": source_name,
+            "destination": destination_name,
+            "removed": removed,
+        }
+
+    def list_traffic_blocks(self):
+        return {
+            "ok": True,
+            "priority": HOST_BLOCK_PRIORITY,
+            "rules": self._managed_flows(HOST_BLOCK_PRIORITY),
+        }
+
+    def list_websites(self):
+        return {
+            "ok": True,
+            "websites": [
+                {"name": name, "ipv4": address}
+                for name, address in sorted(self.website_aliases.items())
+            ],
+            "simulation": (
+                "Fixed IPv4 HTTP endpoints inside Mininet; not DNS, HTTPS "
+                "SNI, or general Internet filtering."
+            ),
+        }
+
+    def _website_spec(self, source, website):
+        resolver = self._resolver()
+        source_host, source_name = resolver.resolve_host(source)
+        website_name, address = self._website(website)
+        criteria = {
+            "ETH_TYPE": "0x800",
+            "ETH_SRC": str(source_host.get("mac") or "").lower(),
+            "IPV4_DST": address + "/32",
+        }
+        return (
+            source_name,
+            website_name,
+            address,
+            (self._host_attachment(source_host), criteria),
+        )
+
+    def set_website_access(
+        self, source, website, action, duration_seconds=300
+    ):
+        action = str(action or "").strip().lower()
+        if action not in ("allow", "deny"):
+            raise ToolError("action must be 'allow' or 'deny'")
+        duration_seconds = int(duration_seconds)
+        if not FLOW_TIMEOUT_MIN <= duration_seconds <= FLOW_TIMEOUT_MAX:
+            raise ToolError(
+                "duration_seconds must be between %d and %d"
+                % (FLOW_TIMEOUT_MIN, FLOW_TIMEOUT_MAX)
+            )
+        source_name, website_name, address, spec = self._website_spec(
+            source, website
+        )
+        if action == "deny":
+            rule = self._install_drop_rule(
+                spec[0],
+                spec[1],
+                WEBSITE_BLOCK_PRIORITY,
+                duration_seconds,
+            )
+            return {
+                "ok": True,
+                "source": source_name,
+                "website": website_name,
+                "ipv4": address,
+                "action": action,
+                "priority": WEBSITE_BLOCK_PRIORITY,
+                "rule": rule,
+            }
+        removed = self._delete_matching_flows(
+            WEBSITE_BLOCK_PRIORITY, [spec]
+        )
+        return {
+            "ok": True,
+            "source": source_name,
+            "website": website_name,
+            "ipv4": address,
+            "action": action,
+            "removed": removed,
+            "note": "underlying connectivity is unchanged",
+        }
+
+    def list_website_policies(self):
+        return {
+            "ok": True,
+            "priority": WEBSITE_BLOCK_PRIORITY,
+            "deny_rules": self._managed_flows(WEBSITE_BLOCK_PRIORITY),
+        }
+
+    def check_website_access(self, source, website, port=80, path="/"):
+        source_name, website_name, address, _spec = self._website_spec(
+            source, website
+        )
+        result = self.control_command(
+            {
+                "command": "http_get",
+                "source": source_name,
+                "destination": address,
+                "port": int(port),
+                "path": str(path),
+            }
+        )
+        result["website"] = website_name
+        return result
 
     def _split_link(self, link):
         match = re.match(r"^(.+?)\s*-\s*(.+)$", str(link or "").strip())
@@ -1032,6 +1484,41 @@ class OnosMCPCore:
                 _arg(args, "source"),
                 _arg(args, "destination"),
                 _int_arg(args, "count", 3, 1, 10),
+            ),
+            "block_traffic": lambda args: self.block_traffic(
+                _arg(args, "source"),
+                _arg(args, "destination"),
+                _int_arg(
+                    args,
+                    "duration_seconds",
+                    300,
+                    FLOW_TIMEOUT_MIN,
+                    FLOW_TIMEOUT_MAX,
+                ),
+            ),
+            "unblock_traffic": lambda args: self.unblock_traffic(
+                _arg(args, "source"), _arg(args, "destination")
+            ),
+            "list_traffic_blocks": lambda args: self.list_traffic_blocks(),
+            "list_websites": lambda args: self.list_websites(),
+            "set_website_access": lambda args: self.set_website_access(
+                _arg(args, "source"),
+                _arg(args, "website"),
+                _arg(args, "action"),
+                _int_arg(
+                    args,
+                    "duration_seconds",
+                    300,
+                    FLOW_TIMEOUT_MIN,
+                    FLOW_TIMEOUT_MAX,
+                ),
+            ),
+            "list_website_policies": lambda args: self.list_website_policies(),
+            "check_website_access": lambda args: self.check_website_access(
+                _arg(args, "source"),
+                _arg(args, "website"),
+                _int_arg(args, "port", 80, 80, 8080),
+                str(args.get("path", "/")),
             ),
             "set_link": lambda args: self.set_link(
                 _arg(args, "link"), _arg(args, "state")
@@ -1268,6 +1755,12 @@ def main(argv=None):
         help="switch alias name=ONOS-device-ID; repeat for more switches",
     )
     parser.add_argument(
+        "--website-alias",
+        action="append",
+        dest="website_aliases",
+        help="simulated website name=IPv4; repeat for more websites",
+    )
+    parser.add_argument(
         "--selftest",
         action="store_true",
         help="print the MCP surface and exit",
@@ -1276,10 +1769,13 @@ def main(argv=None):
 
     host_aliases = parse_aliases(os.environ.get("ONOS_HOST_ALIASES", ""))
     switch_aliases = parse_aliases(os.environ.get("ONOS_SWITCH_ALIASES", ""))
+    website_aliases = parse_aliases(os.environ.get("ONOS_WEBSITE_ALIASES", ""))
     for value in args.host_aliases or []:
         host_aliases.update(parse_aliases(value))
     for value in args.switch_aliases or []:
         switch_aliases.update(parse_aliases(value))
+    for value in args.website_aliases or []:
+        website_aliases.update(parse_aliases(value))
 
     core = OnosMCPCore(
         onos_url=args.onos_url,
@@ -1287,6 +1783,7 @@ def main(argv=None):
         control_url=args.control_url,
         host_aliases=host_aliases,
         switch_aliases=switch_aliases,
+        website_aliases=website_aliases,
         onos_user=args.onos_user,
         onos_password=args.onos_password,
     )

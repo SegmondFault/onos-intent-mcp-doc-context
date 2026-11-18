@@ -59,6 +59,8 @@ class FakeHost:
 
     def cmd(self, command):
         self.last_command = command
+        if "urllib.request" in command:
+            return "200\nhello from simulated site\n"
         return "3 packets transmitted, 3 received, 0% packet loss"
 
 
@@ -80,6 +82,18 @@ class TopologyControlTests(unittest.TestCase):
         ping = control.ping("h1", "h2", 2)
         self.assertTrue(ping["ok"])
         self.assertEqual(ping["loss_percent"], 0)
+
+        fetched = control.http_get("h1", "10.0.0.2", 80, "/health")
+        self.assertTrue(fetched["ok"])
+        self.assertEqual(fetched["status"], 200)
+        self.assertIn("urllib.request", hosts["h1"].last_command)
+
+        with self.assertRaises(ControlError):
+            control.http_get("h1", "example.com", 80, "/")
+        with self.assertRaises(ControlError):
+            control.http_get("h1", "10.0.0.2", 22, "/")
+        with self.assertRaises(ControlError):
+            control.http_get("h1", "10.0.0.2", 80, "/;touch-bad")
 
         down = control.set_link("s1", "s2", "down")
         self.assertEqual(down["status"], "down")

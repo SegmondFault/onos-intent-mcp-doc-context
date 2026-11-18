@@ -569,6 +569,31 @@ class OnosClient:
     def flows(self):
         return self.get_json("/onos/v1/flows").get("flows", [])
 
+    def create_flow(self, device_id, payload, app_id=DEFAULT_APP_ID):
+        """Install one flow rule and return the REST response details."""
+        quoted_device = urllib.parse.quote(device_id, safe="")
+        quoted_app = urllib.parse.quote(app_id, safe="")
+        path = "/onos/v1/flows/%s?appId=%s" % (
+            quoted_device,
+            quoted_app,
+        )
+        status, headers, body = self.request("POST", path, payload)
+        parsed = None
+        if body.strip():
+            try:
+                parsed = json.loads(body)
+            except ValueError:
+                parsed = None
+        return status, headers, parsed, body
+
+    def delete_flow(self, device_id, flow_id):
+        """Delete one flow rule by the device and id returned by ONOS."""
+        quoted_device = urllib.parse.quote(device_id, safe="")
+        quoted_flow = urllib.parse.quote(str(flow_id), safe="")
+        path = "/onos/v1/flows/%s/%s" % (quoted_device, quoted_flow)
+        status, headers, body = self.request("DELETE", path)
+        return status, headers, body, path
+
     def links(self):
         return self.get_json("/onos/v1/links").get("links", [])
 
